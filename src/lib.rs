@@ -144,7 +144,7 @@ where
     ///
     /// This allows changing modes for  INT2/DRDY
 
-    pub fn set_INT2_MODE(&mut self, i2mode: I2Mode) - > Result<&mut Self, E>{
+    pub fn set_INT2_MODE(&mut self, i2mode: I2Mode) -> Result<&mut Self, E> {
         self.change_config(Register::CTRL_REG3, i2mode)
     }
 
