@@ -46,7 +46,7 @@ where
     }
 
     /// Temperature measurement + gyroscope measurements
-    pub fn all(&mut self) -> Result<Measurements, E> {
+    pub fn all(&mut self, ) -> Result<Measurements, E> {
         let mut bytes = [0u8; 9];
         self.read_many(Register::OUT_TEMP, &mut bytes)?;
 
@@ -139,6 +139,17 @@ where
 
         Ok(buffer[1])
     }
+
+    /// Change INT2/DRDY settings
+    ///
+    /// This allows changing modes for  INT2/DRDY
+
+    pub fn set_INT2_MODE(&mut self, i2mode: I2Mode) - > Result<&mut Self, E>{
+        self.change_config(Register::CTRL_REG3, i2mode)
+    }
+
+
+
 
     /// Read multiple bytes starting from the `start_reg` register.
     /// This function will attempt to fill the provided buffer.
@@ -356,6 +367,52 @@ impl Bandwidth {
         }
     }
 }
+
+/// Interrupt mode on INT2/DRDY
+///
+/// Interrupt mode on INT2/DRDY, 5 options are available
+/// Disabled (default), Interrupt on data ready, Interrupt on watermark level,
+/// Interrupt on FIFO overflow (32 capacity), interrupt on empty FIFO
+#[derive(Debug, Clone, Copy)]
+pub enum I2Mode {
+    /// Disable interrupts on INT2/DRDY
+    I2_Disable = 0x00,
+    /// Interrupt when date-ready on DRDY/INT2
+    I2_DRDY = 0x08, 
+    /// Interrupt when watermark level is reached
+    I2_WTM = 0x04,
+    /// Interrupt occurs when there is an overflow on fifo
+    I2_ORun = 0x02,
+    /// Interrupt occurs when the FIFO is empty
+    I2_Empty = 0x01,
+}
+
+impl BitValue for I2Mode {
+    fn width() -> u8 {
+        4
+    }
+    fn shift() -> u8 {
+        0
+    }
+    fn value(&self) -> u8 {
+        *self as u8
+    }
+}
+
+impl I2Mode {
+    fn from_u8(from: u8) -> Self {
+        // Shift and mask I2Mode of register, (ROI: 0b0000_1111)
+        match (from >> I2Mode::shift()) & I2Mode::mask() {
+            x if x == I2Mode::I2_Disable as u8 =>  I2Mode::I2_Disable,
+            x if x == I2Mode::I2_DRDY as u8 =>   I2Mode::I2_DRDY,
+            x if x == I2Mode::I2_WTM as u8 =>  I2Mode::I2_WTM,
+            x if x == I2Mode::I2_ORun as u8 =>  I2Mode::I2_ORun,
+            x if x == I2Mode::I2_Empty as u8 =>  I2Mode::I2_Empty,
+            _ => unreachable!(),
+        }
+    }
+}
+
 
 const READ: u8 = 1 << 7;
 const WRITE: u8 = 0 << 7;
