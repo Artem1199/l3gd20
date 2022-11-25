@@ -12,6 +12,7 @@
 
 #![deny(missing_docs)]
 #![deny(warnings)]
+#![allow(non_camel_case_types)]
 #![no_std]
 
 
@@ -39,8 +40,14 @@ where
     pub fn new(spi: SPI, cs: CS) -> Result<Self, E> {
         let mut l3gd20 = L3gd20 { spi, cs };
 
+        // Reset memory content
+        l3gd20.write_register(Register::FIFO_CTRL_REG, 0b1000_0000)?;
+        l3gd20.write_register(Register::FIFO_CTRL_REG, 0b0000_0000)?;
+
         // power up and enable all the axes
         l3gd20.write_register(Register::CTRL_REG1, 0b00_00_1_111)?;
+
+
 
         Ok(l3gd20)
     }
@@ -72,6 +79,29 @@ where
         })
     }
 
+    /// Gyroscope FIFO reading
+    /// note; constant generics cannot be used in fuction
+    /// must supply N = (# rows to read) * 6 + 1
+    pub fn gyro_fifo<const N: usize, const M: usize>(&mut self) -> Result<I16x3Buf<M>, E> {
+
+        let mut bytes = [0u8; N];
+        self.read_many(Register::OUT_X_L, &mut bytes)?;
+
+        let mut results: I16x3Buf::<M> = I16x3Buf { i16x3buf: [I16x3 {x: 0, y: 0, z: 0 }; M]};
+
+        for i in 0..M {
+            let k = i*6;
+            results.i16x3buf[i] = I16x3 {
+                                x: (bytes[k+1] as u16 + ((bytes[k+2] as u16) << 8)) as i16,
+                                y: (bytes[k+3] as u16 + ((bytes[k+4] as u16) << 8)) as i16,
+                                z: (bytes[k+5] as u16 + ((bytes[k+6] as u16) << 8)) as i16,
+                                };
+        }
+
+        Ok(results)
+    }
+
+
     /// Temperature sensor measurement
     pub fn temp(&mut self) -> Result<i8, E> {
         Ok(self.read_register(Register::OUT_TEMP)? as i8)
@@ -94,6 +124,24 @@ where
         let reg1 = self.read_register(Register::CTRL_REG1)?;
         Ok(Odr::from_u8(reg1))
     }
+    /// Get the current INT2/DRDY mode
+    pub fn int2_mode(&mut self) -> Result<I2Mode, E> {
+        let reg3 = self.read_register(Register::CTRL_REG3)?;
+        Ok(I2Mode::from_u8(reg3))
+    }
+    
+    /// Get the current FIFO enable/disable state
+    pub fn fifo_toggle(&mut self) -> Result<FIFOToggle, E> {
+        let reg5 = self.read_register(Register::CTRL_REG5)?;
+        Ok(FIFOToggle::from_u8(reg5))
+    }
+
+    /// Get the current FIFO mode setting
+    pub fn fifo_mode(&mut self) -> Result<FIFOMode, E> {
+        let fcr = self.read_register(Register::FIFO_CTRL_REG)?;
+        Ok(FIFOMode::from_u8(fcr))
+    }
+
 
     /// Set the Output Data Rate
     pub fn set_odr(&mut self, odr: Odr) -> Result<&mut Self, E> {
@@ -129,6 +177,40 @@ where
         self.change_config(Register::CTRL_REG4, scale)
     }
 
+    /// Change INT2/DRDY settings
+    ///
+    /// This allows changing modes for  INT2/DRDY
+
+    pub fn set_int2_mode(&mut self, i2mode: I2Mode) -> Result<&mut Self, E> {
+        self.change_config(Register::CTRL_REG3, i2mode)
+    }
+    
+    /// Enable or disable the FIFO
+    ///
+    /// This allows changing modes for  INT2/DRDY
+    pub fn set_fifo_toggle(&mut self, fifotoggle: FIFOToggle) -> Result <&mut Self, E> {
+        self.change_config(Register::CTRL_REG5, fifotoggle)
+    }
+
+    /// Change FIFO mode
+    /// There are 5 different FIFO mode: Bypass, FIFO, Stream, Stream-to-FIFO, Bypass-to-Stream
+
+    pub fn set_fifo_mode(&mut self, fifomode: FIFOMode) -> Result <&mut Self, E> {
+
+        self.change_config(Register::FIFO_CTRL_REG, fifomode)
+    }
+
+    /// Change watermark level
+    /// Watermark can be set between 0 and 32 (6bit)
+
+    pub fn set_wtm_tr(&mut self, threshold: usize) -> Result <&mut Self, E> {
+
+        let bitvalue_threshold: BitValueu8 = BitValueu8 {value: threshold as u8};
+        self.change_config(Register::FIFO_CTRL_REG, bitvalue_threshold)
+    }
+
+
+
     fn read_register(&mut self, reg: Register) -> Result<u8, E> {
         let _ = self.cs.set_low();
 
@@ -140,23 +222,13 @@ where
         Ok(buffer[1])
     }
 
-    /// Change INT2/DRDY settings
-    ///
-    /// This allows changing modes for  INT2/DRDY
-
-    pub fn set_INT2_MODE(&mut self, i2mode: I2Mode) -> Result<&mut Self, E> {
-        self.change_config(Register::CTRL_REG3, i2mode)
-    }
-
 
 
 
     /// Read multiple bytes starting from the `start_reg` register.
     /// This function will attempt to fill the provided buffer.
-    fn read_many(&mut self,
-                 start_reg: Register,
-                 buffer: &mut [u8])
-                 -> Result<(), E> {
+    fn read_many(&mut self, start_reg: Register, buffer: &mut [u8])-> Result<(), E> {
+
         let _ = self.cs.set_low();
         buffer[0] = start_reg.addr() | MULTI | READ ;
         self.spi.transfer(buffer)?;
@@ -413,6 +485,110 @@ impl I2Mode {
     }
 }
 
+/// Enable FIFO
+///
+/// Enable the FIFO, can be used to store values
+/// Burst values out when necessary
+
+#[derive(Debug, Clone, Copy)]
+pub enum FIFOToggle {
+    /// Disables the FIFO (default)
+    FIFO_DI = 0x00,
+    /// Enabls the FIFO
+    FIFO_EN = 0x01,
+}
+
+impl BitValue for FIFOToggle {
+    fn width() -> u8 {
+        1
+    }
+    fn shift() -> u8 {
+        6
+    }
+    fn value(&self) -> u8 {
+        *self as u8
+    }
+}
+
+impl FIFOToggle {
+    fn from_u8(from: u8) -> Self {
+        // Shift and mask FIFOToggle of register, (ROI: 0b0100_0000)
+        match (from >> FIFOToggle::shift()) & FIFOToggle::mask() {
+            x if x == FIFOToggle::FIFO_DI as u8 =>  FIFOToggle::FIFO_DI,
+            x if x == FIFOToggle::FIFO_EN as u8 =>   FIFOToggle::FIFO_EN,
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Change FIFO Operating mode
+///
+/// Change funcionality of the FIFO, review L3gd20 for more detail
+
+#[derive(Debug, Clone, Copy)]
+pub enum FIFOMode {
+    /// Bypass mode (default)
+    Bypass = 0x00,
+    /// FIFO mode, data is stored til FIFO overflows then stops
+    Fifo = 0x01,
+    /// Stream mode, data is stored in FIFO, old data is replaced with new data
+    Stream = 0x02,
+    /// Stream-to-FIFO, can set value to change from stream to FIFO mode
+    StrFif = 0x03,
+    /// Bypass-to-Stream, can set value to change from Bypass to stream mode
+    BypStr = 0x04,
+}
+
+impl BitValue for FIFOMode {
+    fn width() -> u8 {
+        3
+    }
+    fn shift() -> u8 {
+        5
+    }
+    fn value(&self) -> u8 {
+        *self as u8
+    }
+}
+
+impl FIFOMode {
+    fn from_u8(from: u8) -> Self {
+        // Shift and mask FIFOMode of register, (ROI: 0b1110_0000)
+        match (from >> FIFOMode::shift()) & FIFOMode::mask() {
+            x if x ==  FIFOMode::Bypass as u8 =>  FIFOMode::Bypass,
+            x if x ==  FIFOMode::Fifo as u8 =>   FIFOMode::Fifo,
+            x if x ==  FIFOMode::Stream as u8 =>   FIFOMode::Stream,
+            x if x ==  FIFOMode::StrFif as u8 =>   FIFOMode::StrFif,
+            x if x ==  FIFOMode::BypStr as u8 =>   FIFOMode::BypStr,
+            _ => unreachable!(),
+        }
+    }
+}
+
+
+/// Create a u8 struct that implements BitValue for the watermark u8
+///
+/// Makes it possible to use the config fn
+
+#[derive(Debug, Clone, Copy)]
+pub struct BitValueu8 {
+    /// threshold value used to edit the register
+    pub value: u8,
+
+}
+
+impl BitValue for BitValueu8 {
+    fn width() -> u8 {
+        5
+    }
+    fn shift() -> u8 {
+        0
+    }
+    fn value(&self) -> u8 {
+        self.value
+    }
+}
+
 
 const READ: u8 = 1 << 7;
 const WRITE: u8 = 0 << 7;
@@ -444,7 +620,7 @@ impl Scale {
 }
 
 /// XYZ triple
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct I16x3 {
     /// X component
     pub x: i16,
@@ -452,6 +628,15 @@ pub struct I16x3 {
     pub y: i16,
     /// Z component
     pub z: i16,
+}
+
+/// XYZ triple Buffer
+#[derive(Debug, Clone, Copy)]
+pub struct I16x3Buf <const N: usize> {
+
+    /// buffer for multiple gyro values read from the fifo
+    pub i16x3buf: [I16x3; N],
+    
 }
 
 /// Several measurements
