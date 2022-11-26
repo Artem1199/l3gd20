@@ -47,8 +47,6 @@ where
         // power up and enable all the axes
         l3gd20.write_register(Register::CTRL_REG1, 0b00_00_1_111)?;
 
-
-
         Ok(l3gd20)
     }
 
@@ -209,8 +207,6 @@ where
         self.change_config(Register::FIFO_CTRL_REG, bitvalue_threshold)
     }
 
-
-
     fn read_register(&mut self, reg: Register) -> Result<u8, E> {
         let _ = self.cs.set_low();
 
@@ -221,8 +217,6 @@ where
 
         Ok(buffer[1])
     }
-
-
 
 
     /// Read multiple bytes starting from the `start_reg` register.
